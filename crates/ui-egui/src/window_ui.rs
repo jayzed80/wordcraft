@@ -257,6 +257,7 @@ impl WordApp {
             animations: _,
             legacy_dark: _,
             nav_tab: _,
+            nav_headings: _,
             nav_pane: _,
             show_discord: _,
             author: _,

@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use wordcraft_engine::Session;
+
 use super::{Counters, Document, LevelSuffix, NumFormat, Path, Pos, StoryRef, Stroke, Tokens, Ui, WordApp, json, regular, semibold, vec2};
 
 /// Draws the Navigation pane: search box and tabs, page list, find results and heading outline.
@@ -73,7 +77,7 @@ pub(super) fn nav(app: &mut WordApp, ui: &mut Ui) {
         }
         _ => {
             let caret = app.session.sel.focus.clone();
-            let items = nav_headings(&app.session.doc);
+            let items = cached_headings(&mut app.ui.nav_headings, &app.session);
             let current = items.iter().rposition(|(path, ..)| *path <= caret.path);
             if items.is_empty() {
                 ui.label(egui::RichText::new(tl!("Create an interactive outline of your document.\n\nIt's a great way to keep track of where you are or quickly move your content around.\n\nTo get started, go to the Home tab and apply Heading styles to the headings in your document.")).weak());
@@ -83,18 +87,18 @@ pub(super) fn nav(app: &mut WordApp, ui: &mut Ui) {
             let collapsed_flags: Vec<bool> = items.iter().enumerate().map(|(i, (p, _, _))| has_children[i] && app.ui.nav_collapsed.contains(p)).collect();
             let levels: Vec<u8> = items.iter().map(|(_, lv, _)| *lv).collect();
             let visible = visible_headings(&levels, &collapsed_flags);
-            for (i, (path, lv, txt)) in items.into_iter().enumerate() {
+            for (i, (path, lv, txt)) in items.iter().enumerate() {
                 if !visible[i] {
                     continue;
                 }
                 let collapsed = collapsed_flags[i];
-                let (toggle, r) = nav_heading(ui, lv, &txt, current == Some(i), has_children[i].then_some(collapsed));
+                let (toggle, r) = nav_heading(ui, *lv, txt, current == Some(i), has_children[i].then_some(collapsed));
                 if toggle {
-                    if !app.ui.nav_collapsed.remove(&path) {
-                        app.ui.nav_collapsed.insert(path);
+                    if !app.ui.nav_collapsed.remove(path) {
+                        app.ui.nav_collapsed.insert(path.clone());
                     }
                 } else if r.clicked() {
-                    let _ = app.run("caret.set", json!({"pos": Pos { story: StoryRef::Body, path, off: 0 }}));
+                    let _ = app.run("caret.set", json!({"pos": Pos { story: StoryRef::Body, path: path.clone(), off: 0 }}));
                     // Align the chosen heading's page immediately against this pane, rather
                     // than the indeterminate minimum movement from scroll_to_rect.
                     app.canvas.nav_to_caret = true;
@@ -121,6 +125,28 @@ pub(super) fn visible_headings(levels: &[u8], collapsed: &[bool]) -> Vec<bool> {
             true
         })
         .collect()
+}
+
+/// The Navigation pane's heading list with what it was built from, so a repaint of an unchanged
+/// document reuses it instead of walking every paragraph again (#4663).
+#[derive(Clone, Debug)]
+pub struct NavHeadings {
+    /// The document, its body replacements and its revision when the list was built.
+    built_for: (u64, u64, u64),
+    items: Arc<Vec<(Path, u8, String)>>,
+}
+
+/// The headings of the document as it is now: the list kept in `cache` while the document, its body
+/// replacements and its revision are unchanged (an edit, Undo/Redo, another document or a restored
+/// version changes one of them), otherwise built again and kept.
+pub(super) fn cached_headings(cache: &mut Option<NavHeadings>, session: &Session) -> Arc<Vec<(Path, u8, String)>> {
+    let key = (session.document_id(), session.ime_body_epoch(), session.rev());
+    if let Some(c) = cache.as_ref().filter(|c| c.built_for == key) {
+        return c.items.clone();
+    }
+    let items = Arc::new(nav_headings(&session.doc));
+    *cache = Some(NavHeadings { built_for: key, items: items.clone() });
+    items
 }
 
 /// The body's headings (paragraphs with an outline level) in document order, as (path, level,

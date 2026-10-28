@@ -169,6 +169,9 @@ pub struct UiState {
     #[serde(rename = "dark", skip_serializing)]
     pub(crate) legacy_dark: Option<bool>,
     pub nav_tab: String,
+    /// The Navigation pane's heading list and what it was built for (#4663); per session, not saved.
+    #[serde(skip)]
+    pub nav_headings: Option<panes::NavHeadings>,
     /// View › Navigation Pane: open or closed as the person left it, kept between runs (#2526).
     /// The session owns it while running (see [`WordApp::prefs`]).
     pub nav_pane: bool,
@@ -307,6 +310,7 @@ impl Default for UiState {
             animations: theme::Animations::default(),
             legacy_dark: None,
             nav_tab: "headings".into(),
+            nav_headings: None,
             nav_pane: false,
             styles_pane_dock: wordcraft_engine::StylesPaneDock::Right,
             styles_pane_float: None,

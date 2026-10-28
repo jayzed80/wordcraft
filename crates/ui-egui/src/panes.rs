@@ -33,6 +33,7 @@ pub use host::show;
 pub(crate) use host::{dock_command, overlay_open};
 pub(crate) use inspector::describe_props;
 use inspector::inspector;
+pub use nav::NavHeadings;
 use nav::nav;
 #[cfg(test)]
 use nav::{nav_heading, nav_headings, visible_headings};
@@ -199,6 +200,39 @@ mod navigation_tests {
         ];
         let texts: Vec<String> = nav_headings(&doc).into_iter().map(|(_, _, t)| t).collect();
         assert_eq!(texts, ["1. Intro", "1.1. Scope", "1.3. Terms", "2. Method", "Appendix"]);
+    }
+
+    /// The heading list is kept across repaints of an unchanged document and rebuilt after an
+    /// edit, an Undo and when another document is open (#4663).
+    #[test]
+    fn headings_are_rebuilt_only_when_the_document_changes() {
+        use std::sync::Arc;
+        let mut s = wordcraft_engine::Session::new(Document::from_text("Intro"));
+        s.run("para.style", &json!({"style": "Heading 1"})).unwrap();
+        let mut cache = None;
+        let first = nav::cached_headings(&mut cache, &s);
+        let texts = |h: &Arc<Vec<(Path, u8, String)>>| h.iter().map(|(_, _, t)| t.clone()).collect::<Vec<_>>();
+        assert_eq!(texts(&first), ["Intro"]);
+        // Repaints of the same document reuse the very same list.
+        assert!(Arc::ptr_eq(&first, &nav::cached_headings(&mut cache, &s)));
+        // Typing changes a heading's text: the list is built again with it.
+        s.run("caret.set", &json!({"pos": s.doc.end_of(StoryRef::Body)})).unwrap();
+        s.run("text.insert", &json!({"text": "duction"})).unwrap();
+        let edited = nav::cached_headings(&mut cache, &s);
+        assert!(!Arc::ptr_eq(&first, &edited));
+        assert_eq!(texts(&edited), ["Introduction"]);
+        // Undo brings the old text back, from a fresh list.
+        s.run("edit.undo", &json!({})).unwrap();
+        let undone = nav::cached_headings(&mut cache, &s);
+        assert!(!Arc::ptr_eq(&edited, &undone));
+        assert_eq!(texts(&undone), ["Intro"]);
+        // Taking the heading style away empties the list: a style change is a change too.
+        s.run("para.style", &json!({"style": "Normal"})).unwrap();
+        assert!(nav::cached_headings(&mut cache, &s).is_empty());
+        // Another document's headings are never served from this one's list.
+        let mut other = wordcraft_engine::Session::new(Document::from_text("Other"));
+        other.run("para.style", &json!({"style": "Heading 1"})).unwrap();
+        assert_eq!(texts(&nav::cached_headings(&mut cache, &other)), ["Other"]);
     }
 
     #[test]
