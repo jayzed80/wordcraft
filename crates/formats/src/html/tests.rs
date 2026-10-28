@@ -474,3 +474,12 @@ fn many_formatted_leading_breaks_trim_quickly() {
     let texts: Vec<String> = f.blocks.iter().filter_map(|b| if let FBlock::Para(p) = b { Some(p.text()) } else { None }).collect();
     assert_eq!(texts, ["x"]);
 }
+
+#[test]
+fn font_size_at_the_integer_limits_does_not_overflow() {
+    // `<font size>` offsets were added to 3 unchecked, so the extreme values panicked in debug builds.
+    for size in ["+2147483647", "--2147483648", "-2147483647", "+99999999999"] {
+        let f = parse(&format!("<font size=\"{size}\">x</font>"));
+        assert!(texts(&f).iter().any(|t| t.ends_with(":x")), "size={size}");
+    }
+}
