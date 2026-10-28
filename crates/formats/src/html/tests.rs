@@ -482,4 +482,15 @@ fn font_size_at_the_integer_limits_does_not_overflow() {
         let f = parse(&format!("<font size=\"{size}\">x</font>"));
         assert!(texts(&f).iter().any(|t| t.ends_with(":x")), "size={size}");
     }
+    // The offsets saturate, then clamp to the 1..=7 scale: 7 is 36 pt, 1 is 7.5 pt.
+    let size = |html: &str| match &parse(html).blocks[0] {
+        FBlock::Para(p) => p.inlines.iter().find_map(|i| match i {
+            Inline::Text(_, fmt) => fmt.size,
+            _ => None,
+        }),
+        _ => None,
+    };
+    assert_eq!(size("<font size=\"+2147483647\">x</font>"), Some(36.0));
+    assert_eq!(size("<font size=\"--2147483648\">x</font>"), Some(36.0));
+    assert_eq!(size("<font size=\"-2147483647\">x</font>"), Some(7.5));
 }
