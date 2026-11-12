@@ -903,3 +903,85 @@ fn inspect_removals_work_when_the_document_does_not_track_changes() {
     assert!(!text.contains("Hidden"), "the hidden text is still there: {text}");
     assert!(text.contains("Visible text."), "{text}");
 }
+
+/// A DOCX package whose body is an intro, a 1×2 table with a rich-text control around the
+/// second cell's paragraph "Payment is due within `words` days.", and a closing paragraph.
+fn docx_with_control_in_cell(words: &str) -> Vec<u8> {
+    docx_cell_shape(words, 0)
+}
+
+fn docx_cell_shape(words: &str, shape: u8) -> Vec<u8> {
+    use std::io::Write;
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let sdt = |inner: &str| format!(r#"<w:sdt><w:sdtPr><w:id w:val="42"/></w:sdtPr><w:sdtContent>{inner}</w:sdtContent></w:sdt>"#);
+    let text = format!("Payment is due within {words} days.");
+    let first = format!("<w:tc>{}</w:tc>", p("Terms"));
+    let row = match shape {
+        0 => format!("{first}<w:tc>{}</w:tc>", sdt(&p(&text))),
+        1 => format!("{first}<w:tc><w:p>{}</w:p></w:tc>", sdt(&format!("<w:r><w:t>{text}</w:t></w:r>"))),
+        2 => format!("{first}{}", sdt(&format!("<w:tc>{}</w:tc>", p(&text)))),
+        4 => format!(
+            r#"{first}<w:tc><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:id w:val="42"/><w:placeholder><w:docPart w:val="X"/></w:placeholder></w:sdtPr><w:sdtEndPr/><w:sdtContent><w:p><w:r><w:t>{text}</w:t></w:r><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/></w:p></w:sdtContent></w:sdt></w:tc>"#
+        ),
+        5 => format!(
+            r#"{first}<w:tc>{}<w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/></w:tc>"#,
+            sdt(&p(&text))
+        ),
+        6 => format!("{first}<w:tc>{}{}</w:tc>", sdt(&p(&text)), p("")),
+        _ => format!("{}", sdt(&format!("{first}<w:tc>{}</w:tc>", p(&text)))),
+    };
+    let xml = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{}<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>{row}</w:tr></w:tbl>{}</w:body></w:document>"#,
+        p("Intro."),
+        p("Closing.")
+    );
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, value) in [
+        ("word/document.xml", xml.as_str()),
+        (
+            "_rels/.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="main" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+        ),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(value.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn compare_keeps_a_changed_control_in_a_table_cell() {
+    let dir = std::env::temp_dir();
+    let rev = dir.join(format!("wc-compare-cell-control-{}.docx", std::process::id()));
+    std::fs::write(&rev, docx_with_control_in_cell("forty-five")).unwrap();
+    let mut s = Session::new(wordcraft_docx::read(&docx_with_control_in_cell("thirty")).unwrap());
+    s.run("review.compare", &json!({"path": rev.to_string_lossy()})).unwrap();
+    let _ = std::fs::remove_file(&rev);
+    eprintln!("MODEL: {:?}", s.doc.plain_text(StoryRef::Body));
+    let bytes = wordcraft_docx::write(&s.doc).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap().by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    for shape in 0..7u8 {
+        let opts = json!({});
+        eprintln!("SHAPE {shape}");
+        for then in ["review.acceptAll", "review.rejectAll"] {
+            let mut o = opts.clone();
+            o["path"] = json!(rev.to_string_lossy());
+            std::fs::write(&rev, docx_cell_shape("forty-five", shape)).unwrap();
+            let mut s = Session::new(wordcraft_docx::read(&docx_cell_shape("thirty", shape)).unwrap());
+            s.run("review.compare", &o).unwrap();
+            let mut t = Session::new(wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap());
+            eprintln!("REREAD {o}: {:?}", t.doc.plain_text(StoryRef::Body));
+            t.run(then, &json!({})).unwrap();
+            s.run(then, &json!({})).unwrap();
+            eprintln!("{then} model: {:?} reread: {:?}", s.doc.plain_text(StoryRef::Body), t.doc.plain_text(StoryRef::Body));
+            let x = wordcraft_docx::write(&t.doc).unwrap();
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut zip::ZipArchive::new(std::io::Cursor::new(&x)).unwrap().by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+            eprintln!("  sdtContent: {:?}", xml.split("<w:sdtContent>").skip(1).map(|x| x.split("</w:sdtContent>").next().unwrap_or("").len()).collect::<Vec<_>>());
+        }
+    }
+    let _ = std::fs::remove_file(&rev);
+    panic!("probe");
+}
