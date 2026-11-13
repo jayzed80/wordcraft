@@ -602,6 +602,51 @@ fn compare_with_a_revised_file_keeps_its_text_boxes_backed() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// #6273: a comment the revised document added on a word in a table cell (all text the same)
+/// survives the compare, with its text, and is saved; the anchors never point at a comment the
+/// result lacks.
+#[test]
+fn compare_keeps_a_comment_added_in_a_table_cell() {
+    fn with_table(comment: bool) -> Session {
+        let mut s = Session::new(Document::from_text("Intro."));
+        s.run("caret.set", &json!({"pos": Pos::body(0, "Intro.".len())})).unwrap();
+        s.run("insert.table", &json!({"rows": 1, "cols": 1})).unwrap();
+        s.run("text.insert", &json!({"text": "Alpha Beta"})).unwrap();
+        if comment {
+            s.run("select.text", &json!({"text": "Beta"})).unwrap();
+            s.run("review.newComment", &json!({"text": "Check this."})).unwrap();
+        }
+        s
+    }
+    let rev = with_table(true);
+    assert_eq!(rev.doc.comments.len(), 1);
+    let path = std::env::temp_dir().join(format!("wc-compare-cell-comment-{}.docx", std::process::id()));
+    crate::io::save_path(&path, &rev.doc).unwrap();
+    for show_in in ["original", "revised", "new"] {
+        let mut s = with_table(false);
+        s.run("review.compare", &json!({"path": path.to_string_lossy(), "showIn": show_in})).unwrap();
+        let list = s.run("review.comments", &json!({})).unwrap();
+        assert_eq!(list.as_array().map(Vec::len), Some(1), "{show_in}: {list}");
+        let (id, c) = s.doc.comments.iter().next().unwrap();
+        assert_eq!(s.doc.plain_text(StoryRef::Part(c.part)), "Check this.", "{show_in}");
+        let mut anchors = Vec::new();
+        for path in s.doc.para_paths(StoryRef::Body) {
+            for (_, o) in s.doc.para(StoryRef::Body, &path).unwrap().objects_with_offsets() {
+                if let InlineObject::CommentStart { id } | InlineObject::CommentEnd { id } = o {
+                    anchors.push(*id);
+                }
+            }
+        }
+        assert_eq!(anchors, [*id, *id], "{show_in}");
+        let saved = std::env::temp_dir().join(format!("wc-compare-cell-comment-out-{}-{show_in}.docx", std::process::id()));
+        crate::io::save_path(&saved, &s.doc).unwrap();
+        let back = crate::io::open_path(&saved).unwrap();
+        let _ = std::fs::remove_file(&saved);
+        assert_eq!(back.comments.len(), 1, "{show_in}: the saved result lost the comment");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn compare_bounds_total_diff_work() {
     // Many long, slightly different paragraphs: each pair alone fits one comparison table,
