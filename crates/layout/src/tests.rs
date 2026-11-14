@@ -1868,6 +1868,27 @@ fn left_tab_past_the_right_indent_does_not_add_a_line() {
     assert!((page.x - 72.0).abs() < 0.5, "the text after the tab starts at the indent: {}", page.x);
 }
 
+/// A right tab stop past the right indent (a template's 8.5-inch stop on a narrower text
+/// column) ends the text after it on the right indent instead of past the page edge (#6447).
+#[test]
+fn right_tab_past_the_right_indent_ends_text_on_the_indent() {
+    use wordcraft_doc::props::{TabAlign, TabLeader, TabStop};
+    let text = "Degree\tMay 20XX";
+    for (indent_right, edge) in [(0.0, 540.0), (36.0, 504.0)] {
+        let mut d = Document::from_text(text);
+        d.format_paragraphs(&Pos::body(0, 0), &Pos::body(0, 0), &|p| {
+            p.indent_right = Some(indent_right);
+            p.tabs = Some(vec![TabStop { pos: 612.0, align: TabAlign::Right, leader: TabLeader::None }])
+        })
+        .unwrap();
+        let l = lay(&d);
+        let start = l.caret(&Pos::body(0, 0)).unwrap();
+        let end = l.caret(&Pos::body(0, text.len())).unwrap();
+        assert!((end.x - edge).abs() < 0.5, "right indent {indent_right}: the text ends at {}, not {edge}", end.x);
+        assert!((end.top - start.top).abs() < 0.01, "right indent {indent_right}: one line");
+    }
+}
+
 /// A bookmark before such a tab is not text: the tab does not wrap away from it, and the
 /// paragraph breaks as it does without the bookmark (no line holding only the bookmark).
 #[test]
