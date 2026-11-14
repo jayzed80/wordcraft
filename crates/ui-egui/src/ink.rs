@@ -215,12 +215,11 @@ fn to_screen(rects: &[Rect], layout: &DocLayout, scale: f32, page: usize) -> Opt
     Some(move |[x, y]: [f32; 2]| pos2(r.min.x + x * s, r.min.y + y * s))
 }
 
-/// The on-screen colour of ink: on a dark page (View > Switch Modes) it is mapped like the page
-/// draws a saved stroke ([`wordcraft_render::RenderOptions::ink_stroke`]), so a stroke looks the
-/// same while it is drawn as after it is saved.
+/// The on-screen colour of ink: on a dark page (View > Switch Modes) it is mapped like every other
+/// document colour, so a stroke looks the same while it is drawn as after it is saved.
 fn screen_ink(dark: bool, c: wordcraft_doc::Rgb, alpha: u8) -> Color32 {
     let opts = wordcraft_render::RenderOptions { dark, ..Default::default() };
-    let wordcraft_doc::Rgb(r, g, b) = opts.ink_stroke(c);
+    let wordcraft_doc::Rgb(r, g, b) = opts.ink(c);
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 

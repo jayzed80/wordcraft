@@ -209,16 +209,6 @@ impl RenderOptions {
         Rgb(lift(r), lift(g), lift(b))
     }
 
-    /// The on-screen colour for ink (a pen, pencil or highlighter stroke). A dark page takes the
-    /// lighter of its colour and its inverted colour ([`RenderOptions::ink`]): black and dark
-    /// pens turn light so they read on the dark paper, while light pens keep their colour
-    /// instead of turning dark, and white ink stays white instead of vanishing into the paper
-    /// (#6548).
-    pub fn ink_stroke(&self, c: Rgb) -> Rgb {
-        let inked = self.ink(c);
-        if c.luma() > inked.luma() { c } else { inked }
-    }
-
     /// The on-screen colour for a text background (highlight, character shading). A dark page
     /// dims it toward black, keeping its hue, instead of inverting it: inverting leaves bright
     /// hues such as yellow bright, so the white text on them can't be read (#1252). Every
@@ -954,7 +944,7 @@ fn draw_ink(ctx: &mut RenderContext, fr: &Frame, it: &Draw) {
         return;
     }
     ctx.set_transform(fr.view);
-    ctx.set_paint(color(fr.opts.ink_stroke(*c), *alpha));
+    ctx.set_paint(color(fr.opts.ink(*c), *alpha));
     let w = if width.is_finite() { width.clamp(0.25, 200.0) } else { 1.0 };
     ctx.set_stroke(kurbo::Stroke::new(w as f64).with_caps(kurbo::Cap::Round).with_join(kurbo::Join::Round));
     ctx.stroke_path(&path);
