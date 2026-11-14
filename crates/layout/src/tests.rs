@@ -8082,6 +8082,53 @@ fn chart_text_the_font_lacks_is_drawn_in_a_fallback_face() {
     assert!(xs.windows(2).all(|w| w[0] <= w[1]), "{xs:?}");
 }
 
+#[test]
+fn rtl_chart_labels_are_drawn_right_to_left() {
+    // #6651: a Persian category label in a chart from Word was drawn with its letters reversed.
+    use wordcraft_doc::graphic::{Graphic, GraphicItem, GraphicKind, TextAlign};
+    use wordcraft_doc::props::Rgb;
+    crate::test_fonts();
+    let text = |y: f32, label: &str| GraphicItem::Text {
+        rect: [0.0, y, 216.0, 20.0],
+        text: label.into(),
+        size: 10.0,
+        color: Rgb::BLACK,
+        bold: false,
+        align: TextAlign::Center,
+        font: None,
+    };
+    let (persian, mixed) = ("فروش ماهانه", "Q1 سود");
+    let graphic = Graphic { kind: GraphicKind::Chart, items: vec![text(20.0, persian), text(60.0, mixed)], ..Default::default() };
+    let obj = InlineObject::Graphic { w: 216.0, h: 144.0, alt: String::new(), float: Default::default(), graphic: Arc::new(graphic) };
+    let mut d = Document::from_text("Chart");
+    d.insert_object(&Pos::body(0, 0), obj, &Default::default()).unwrap();
+    let draws = flat(display::page_display(&d, &lay(&d).pages[0], &Default::default()));
+    // Each glyph of a label as (x, the label's byte it shows), left to right.
+    let glyphs_of = |label: &str| -> Vec<(f32, usize)> {
+        let mut out = Vec::new();
+        for x in &draws {
+            let display::Draw::Glyphs { text, glyphs, ranges, .. } = x else { continue };
+            let Some(off) = label.find(text.as_str()).filter(|_| !text.trim().is_empty()) else { continue };
+            assert_eq!(ranges.len(), glyphs.len(), "{text:?}");
+            out.extend(glyphs.iter().zip(ranges).map(|(g, r)| (g.1, off + r.start)));
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    };
+    // All Persian: its first letter is drawn rightmost, its last leftmost.
+    let p = glyphs_of(persian);
+    assert!(!p.is_empty());
+    assert!(p.windows(2).all(|w| w[0].1 >= w[1].1), "{persian:?} is drawn left to right: {p:?}");
+    // Latin first: "Q1" on the left, then the Persian word read right to left.
+    let m = glyphs_of(mixed);
+    let fa = mixed.find('س').unwrap();
+    let (latin, rtl): (Vec<(f32, usize)>, Vec<(f32, usize)>) = m.iter().partition(|g| g.1 < fa);
+    assert!(!latin.is_empty() && !rtl.is_empty(), "{m:?}");
+    assert!(latin.iter().all(|l| rtl.iter().all(|r| l.0 < r.0)), "{m:?}");
+    assert!(latin.windows(2).all(|w| w[0].1 <= w[1].1), "{m:?}");
+    assert!(rtl.windows(2).all(|w| w[0].1 >= w[1].1), "{m:?}");
+}
+
 /// The draws with figures opened up.
 fn flat(draws: Vec<display::Draw>) -> Vec<display::Draw> {
     draws.into_iter().flat_map(|x| if let display::Draw::Figure { draws, .. } = x { draws } else { vec![x] }).collect()

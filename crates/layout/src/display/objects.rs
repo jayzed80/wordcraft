@@ -305,14 +305,27 @@ fn text_glyphs(doc: &Document, r: Rect, it: &GraphicItem, alpha: f32, k: f32) ->
         TextAlign::Right => r.x + r.w - width,
     };
     let mut out = Vec::with_capacity(runs.len());
-    for (face, s, shaped) in runs {
+    for piece in visual_pieces(text, &runs) {
+        let Some((face, s, shaped)) = runs.get(piece.run) else { continue };
+        let face = *face;
         let k = scale(face);
-        let ranges = crate::missing::cluster_ranges(s, &shaped);
-        let mut glyphs = Vec::with_capacity(shaped.len());
-        for g in &shaped {
+        let all_ranges = crate::missing::cluster_ranges(s, shaped);
+        let mut glyphs = Vec::with_capacity(piece.glyphs.len());
+        let mut ranges = Vec::with_capacity(piece.glyphs.len());
+        for &i in &piece.glyphs {
+            let Some(g) = shaped.get(i) else { continue };
             glyphs.push((g.gid, pen + g.x_offset as f32 * k, baseline - g.y_offset as f32 * k));
             pen += g.x_advance as f32 * k;
+            ranges.extend(all_ranges.get(i).cloned());
         }
+        // The text this piece shows, and each glyph's range in it.
+        let (b0, b1) = (ranges.iter().map(|r| r.start).min().unwrap_or(0), ranges.iter().map(|r| r.end).max().unwrap_or(s.len()));
+        let text = s.get(b0..b1).unwrap_or(s).to_string();
+        let ranges = if ranges.len() == glyphs.len() {
+            ranges.iter().map(|r| r.start.saturating_sub(b0)..r.end.saturating_sub(b0)).collect()
+        } else {
+            Vec::new()
+        };
         // A fallback face is emboldened when it has no bold of its own, as in body text.
         let synth_bold = if face.id() == primary.id() { resolved.synth_bold } else { *bold && face.weight < 600.0 };
         out.push(Draw::Glyphs {
@@ -323,12 +336,58 @@ fn text_glyphs(doc: &Document, r: Rect, it: &GraphicItem, alpha: f32, k: f32) ->
             alpha,
             synth_bold,
             synth_italic: false,
-            text: s.to_string(),
+            text,
             link: None,
             ranges,
             text_bg: None,
             x_scale: 1.0,
         });
+    }
+    out
+}
+
+/// Glyphs of one face run drawn side by side: indices into the run's shaped glyphs, left to right.
+struct Piece {
+    run: usize,
+    glyphs: Vec<usize>,
+}
+
+/// The glyphs of a one-line label's face `runs` (each shaped in logical order) in the order they
+/// are drawn, left to right, as pieces of one face run each. Left-to-right text is drawn as it
+/// comes; text with right-to-left letters is ordered by the bidi algorithm (UAX #9, its base
+/// direction from its first strong letter), so a Persian chart label reads right to left (#6651).
+/// A cluster's glyphs keep the shaper's order.
+fn visual_pieces(text: &str, runs: &[(FaceRef, &str, Vec<wordcraft_fonts::ShapedGlyph>)]) -> Vec<Piece> {
+    let in_order = || runs.iter().enumerate().map(|(run, (_, _, shaped))| Piece { run, glyphs: (0..shaped.len()).collect() }).collect();
+    if !text.chars().any(wordcraft_fonts::is_rtl) {
+        return in_order();
+    }
+    let rtl_base = unicode_bidi::ParagraphBidiInfo::new(text, None).paragraph_level.is_rtl();
+    let levels = crate::para::bidi_levels(text, rtl_base);
+    // Each cluster: (run, its glyphs' indices), with its level, in logical order.
+    let mut clusters: Vec<(usize, Vec<usize>)> = Vec::new();
+    let mut cluster_levels: Vec<u8> = Vec::new();
+    for (run, (_, s, shaped)) in runs.iter().enumerate() {
+        // The run's offset in `text`: runs are slices of it.
+        let off = (s.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+        let mut prev: Option<usize> = None;
+        for (i, g) in shaped.iter().enumerate() {
+            match clusters.last_mut() {
+                Some((r, gs)) if *r == run && prev == Some(g.cluster) => gs.push(i),
+                _ => {
+                    clusters.push((run, vec![i]));
+                    cluster_levels.push(levels.get(off.saturating_add(g.cluster)).copied().unwrap_or(u8::from(rtl_base)));
+                }
+            }
+            prev = Some(g.cluster);
+        }
+    }
+    let mut out: Vec<Piece> = Vec::new();
+    for (run, gs) in crate::para::visual_order(&cluster_levels).into_iter().filter_map(|c| clusters.get(c)) {
+        match out.last_mut() {
+            Some(p) if p.run == *run => p.glyphs.extend_from_slice(gs),
+            _ => out.push(Piece { run: *run, glyphs: gs.clone() }),
+        }
     }
     out
 }
