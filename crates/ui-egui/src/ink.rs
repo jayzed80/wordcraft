@@ -215,11 +215,12 @@ fn to_screen(rects: &[Rect], layout: &DocLayout, scale: f32, page: usize) -> Opt
     Some(move |[x, y]: [f32; 2]| pos2(r.min.x + x * s, r.min.y + y * s))
 }
 
-/// The on-screen colour of ink: on a dark page (View > Switch Modes) it is mapped like every other
-/// document colour, so a stroke looks the same while it is drawn as after it is saved.
+/// The on-screen colour of ink: on a dark page (View > Switch Modes) it is mapped like the page
+/// draws a saved stroke ([`wordcraft_render::RenderOptions::ink_stroke`]), so a stroke looks the
+/// same while it is drawn as after it is saved.
 fn screen_ink(dark: bool, c: wordcraft_doc::Rgb, alpha: u8) -> Color32 {
     let opts = wordcraft_render::RenderOptions { dark, ..Default::default() };
-    let wordcraft_doc::Rgb(r, g, b) = opts.ink(c);
+    let wordcraft_doc::Rgb(r, g, b) = opts.ink_stroke(c);
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
@@ -451,5 +452,10 @@ mod tests {
         // Black pen on a dark page turns light, like the saved stroke.
         let dark = screen_ink(true, black, 128);
         assert_eq!(dark, Color32::from_rgba_unmultiplied(255, 255, 255, 128));
+        // White and light pens keep their colour on a dark page instead of vanishing (#6548).
+        let white = wordcraft_doc::Rgb(255, 255, 255);
+        assert_eq!(screen_ink(true, white, 255), Color32::from_rgba_unmultiplied(255, 255, 255, 255));
+        let mint = wordcraft_doc::Rgb(0x90, 0xEE, 0x90);
+        assert_eq!(screen_ink(true, mint, 255), Color32::from_rgba_unmultiplied(0x90, 0xEE, 0x90, 255));
     }
 }

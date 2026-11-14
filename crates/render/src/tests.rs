@@ -779,6 +779,33 @@ fn dark_page_inverts_lightness() {
     assert!(light > 30, "light {light}");
 }
 
+/// #6548: on a dark page, ink keeps a readable colour: white and light pens keep theirs instead
+/// of turning the paper grey or dark, and black and dark pens turn light.
+#[test]
+fn dark_page_ink_stays_readable() {
+    let dark = RenderOptions { dark: true, ..Default::default() };
+    let stroke = |c: Rgb| {
+        let items = [Draw::Ink { pts: vec![(4.0, 16.0), (28.0, 16.0)], color: c, width: 4.0, alpha: 1.0 }];
+        let img = render_items(&Document::new(), &items, wordcraft_geom::Rect::new(0.0, 0.0, 32.0, 32.0), 4.0, &dark);
+        let [r, g, b, _] = img.pixel(64, 64);
+        Rgb(r, g, b)
+    };
+    let paper = Rgb(DARK_PAPER, DARK_PAPER, DARK_PAPER);
+    for (pen, want) in [
+        (Rgb::WHITE, Rgb::WHITE),
+        (Rgb(0x90, 0xEE, 0x90), Rgb(0x90, 0xEE, 0x90)),
+        (Rgb(0xFF, 0xFF, 0x00), dark.ink(Rgb(0xFF, 0xFF, 0x00))),
+        (Rgb::BLACK, Rgb::WHITE),
+        (Rgb(0, 0, 0x80), dark.ink(Rgb(0, 0, 0x80))),
+    ] {
+        let got = stroke(pen);
+        assert_eq!(got, want, "pen {pen:?}");
+        assert!(contrast(got, paper) >= 4.5, "pen {pen:?} drawn {got:?} is hard to see on the dark paper");
+    }
+    // A light page draws every pen as it is.
+    assert_eq!(RenderOptions::default().ink_stroke(Rgb(0x90, 0xEE, 0x90)), Rgb(0x90, 0xEE, 0x90));
+}
+
 /// #2534: legacy font effects are drawn: outlined letters are hollow; shadowed and embossed
 /// ones have a grey copy down-right, imprinted ones up-left.
 #[test]
