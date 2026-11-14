@@ -945,7 +945,9 @@ impl Body<'_> {
             }
             p.extra.get_or_insert_with(Default::default).tabs = Some(tabs);
         }
-        if rule && kind == Kind::Normal {
+        // A rule stands in for a bottom line only when the paragraph has no borders of its own:
+        // it would replace them with a grey line and drop every other side.
+        if rule && kind == Kind::Normal && p.borders.is_none() {
             p.kind = Kind::Rule;
         }
         if let Some(lv) = self.lists.len().checked_sub(1)
