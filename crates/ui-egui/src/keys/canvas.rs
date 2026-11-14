@@ -411,6 +411,11 @@ fn key_press(app: &mut WordApp, ctx: &egui::Context, key: Key, modifiers: Modifi
         app.session.painter = None;
         return;
     }
+    // Escape turns highlighter mode off (#6461).
+    if key == Key::Escape && app.canvas.highlighter.is_some() {
+        app.canvas.highlighter = None;
+        return;
+    }
     // The lasso selection and Ink Replay take Delete and Escape first.
     if crate::ink::key(app, key) {
         return;
