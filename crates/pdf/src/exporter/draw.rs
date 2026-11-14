@@ -31,9 +31,7 @@ impl Exporter<'_> {
                     }
                     None => self.glyphs(s, face, *size, glyphs, paint, (text, ranges)),
                 }
-                if self.opts.links
-                    && let Some(l) = link
-                {
+                if let Some(l) = link {
                     self.link_rect(face, *size, glyphs, l);
                 }
             }
