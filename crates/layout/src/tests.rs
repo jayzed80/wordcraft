@@ -15444,3 +15444,74 @@ fn turned_cell_float_keeps_its_along_text_offset() {
         assert!((confined.y - reference.y).abs() < 0.01, "{direction:?}: {confined:?} vs {reference:?}");
     }
 }
+
+/// A keep-with-next chain longer than a page fills the page from the top and breaks at its
+/// bottom, as an unkept run of the same lines would (#6593). WordCraft broke it well short of
+/// the bottom and carried the tail to the next page.
+#[test]
+fn keep_with_next_chain_longer_than_the_page_breaks_at_the_bottom() {
+    crate::test_fonts();
+    let pages = |keep: bool| -> Vec<usize> {
+        let mut d = Document::new();
+        let plain = ParaProps {
+            space_before: Some(0.0),
+            space_after: Some(0.0),
+            line_spacing: Some(wordcraft_doc::props::LineSpacing::Multiple(1.0)),
+            ..Default::default()
+        };
+        let para = |text: &str, p: &ParaProps| {
+            let mut x = wordcraft_doc::Paragraph::with_text(text, Default::default());
+            x.props = p.clone();
+            wordcraft_doc::para_block(x)
+        };
+        let kept = ParaProps { keep_next: Some(keep), ..plain.clone() };
+        d.body.push(para("Text on page 1.", &plain));
+        d.body.push(para("Heading on page 2", &ParaProps { page_break_before: Some(true), ..kept.clone() }));
+        d.body.extend((0..69).map(|i| para(&format!("Line {i}"), &kept)));
+        d.body.push(para("Last line", &plain));
+        let l = lay(&d);
+        (0..d.body.len()).map(|k| l.caret(&Pos::body(k, 0)).unwrap().page).collect()
+    };
+    let plain = pages(false);
+    assert!(plain.contains(&2), "the run is longer than a page: {plain:?}");
+    assert_eq!(pages(true), plain, "a chain too long for a page breaks where unkept lines do");
+}
+
+/// The second case of #6593: a kept heading starting a page, a kept list that fits below it,
+/// then a picture too tall to share the page. The chain does not fit on one page, so Word keeps
+/// the whole list below the heading and moves only the picture over; WordCraft carried the last
+/// items over with the picture. And a kept empty paragraph before the heading stays at the bottom
+/// of its page: the heading starts a new page anyway, so nothing after it needs room there.
+/// WordCraft moved it, leaving it alone on a blank page.
+#[test]
+fn keep_with_next_chain_before_a_tall_picture_keeps_its_list_on_the_page() {
+    crate::test_fonts();
+    // Pages of the body lines, the empty kept paragraph, the heading, each item and the picture.
+    let pages = |body: usize| -> Vec<usize> {
+        let mut d = Document::new();
+        let plain = ParaProps {
+            space_before: Some(0.0),
+            space_after: Some(0.0),
+            line_spacing: Some(wordcraft_doc::props::LineSpacing::Multiple(1.0)),
+            ..Default::default()
+        };
+        let kept = ParaProps { keep_next: Some(true), keep_lines: Some(true), ..plain.clone() };
+        let para = |text: &str, p: &ParaProps| {
+            let mut x = wordcraft_doc::Paragraph::with_text(text, Default::default());
+            x.props = p.clone();
+            x
+        };
+        d.body = (0..body).map(|i| wordcraft_doc::para_block(para(&format!("Body {i}"), &plain))).collect();
+        d.body.push(wordcraft_doc::para_block(para("", &kept)));
+        d.body.push(wordcraft_doc::para_block(para("Heading", &ParaProps { page_break_before: Some(true), ..kept.clone() })));
+        d.body.extend((1..=30).map(|i| wordcraft_doc::para_block(para(&format!("Item {i}"), &kept))));
+        let mut pic = para("", &kept);
+        pic.insert_object(0, picture(400.0, 500.0, Default::default()), &Default::default()).unwrap();
+        d.body.push(wordcraft_doc::para_block(pic));
+        let l = lay(&d);
+        (0..d.body.len()).map(|k| l.caret(&Pos::body(k, 0)).unwrap().page).collect()
+    };
+    let expect = |body: usize| -> Vec<usize> { [vec![0; body + 1], vec![1; 31], vec![2]].concat() };
+    assert_eq!(pages(36), expect(36), "the empty kept paragraph stays on the first page");
+    assert_eq!(pages(5), expect(5), "the list stays below its heading; the picture goes over");
+}
