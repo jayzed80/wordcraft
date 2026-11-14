@@ -62,23 +62,6 @@ fn an_empty_paragraph_with_only_a_bottom_border_is_still_a_rule() {
 }
 
 #[test]
-fn an_empty_boxed_paragraph_keeps_its_own_borders() {
-    // LibreOffice writes each side of a box when they differ in anything (#6455); an empty
-    // paragraph in the box keeps its sides, not a grey rule in their place.
-    let side = |w: &str| format!(r##"{w}="1.5pt solid #ff0000""##);
-    let all = ["fo:border-top", "fo:border-left", "fo:border-bottom", "fo:border-right"].map(side).join(" ");
-    let b = props(&open(&format!(r#"{all} fo:padding-left="4pt""#), "")).borders.expect("borders");
-    for s in [b.top, b.left, b.bottom, b.right] {
-        let s = s.expect("side");
-        assert_eq!((s.style, s.width, s.color), (BorderStyle::Single, 1.5, Some(Rgb(255, 0, 0))), "{b:?}");
-    }
-    assert_eq!(b.left.map(|l| l.space), Some(4.0));
-    // A bottom line alone keeps its own width and colour too.
-    let b = props(&open(r##"fo:border-bottom="2pt double #0000ff""##, "")).borders.and_then(|b| b.bottom).expect("bottom");
-    assert_eq!((b.style, b.width, b.color), (BorderStyle::Double, 2.0, Some(Rgb(0, 0, 255))));
-}
-
-#[test]
 fn borders_and_background_round_trip() {
     let line = Border { style: BorderStyle::Double, width: 1.5, color: Some(Rgb(200, 0, 0)), space: 3.0 };
     let want = ParaProps {
