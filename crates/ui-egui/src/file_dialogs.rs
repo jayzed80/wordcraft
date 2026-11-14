@@ -296,10 +296,9 @@ impl WordApp {
                 let r = if ext == "png" {
                     self.run("file.exportPng", json!({"path": path}))
                 } else if ext == crate::print_page::EXPORT_WORD_2003 {
-                    self.run("file.saveAs", json!({"path": path, "format": ext, "copy": true}))
+                    self.run("file.saveAs", json!({"path": path, "format": ext}))
                 } else {
-                    // An export is a copy: the document keeps its own file and changes (#6131).
-                    self.run("file.saveAs", json!({"path": path, "copy": true}))
+                    self.run("file.saveAs", json!({"path": path}))
                 };
                 if r.is_ok() {
                     self.status(crate::i18n::fmt(tl!("Exported {path}"), &[("path", &crate::i18n::isolate_path(&path))]));
