@@ -206,6 +206,24 @@ fn heading_level_matches_a_localized_style_id() {
     assert_eq!(h[3], ["Endings"]);
 }
 
+/// #7020: Spanish Word writes `STYLEREF "Título 1"` for the style the file names `heading 1`
+/// under the id `Ttulo1`: each page's header shows its chapter, with `\* Upper` applied, not
+/// the no-paragraph error. A name that matches no style's id stays an error.
+#[test]
+fn a_localized_built_in_style_name_finds_its_style() {
+    crate::test_fonts();
+    let paras: Vec<(&str, &str, bool)> = CHAPTERS.iter().map(|(s, t, b)| (if *s == "Heading1" { "Ttulo1" } else { *s }, *t, *b)).collect();
+    let mut d = doc(&paras, &[r#"STYLEREF "Título 1" \* Upper"#, r#"STYLEREF "Título 7""#]);
+    let st = Arc::make_mut(&mut d.styles).styles.iter_mut().find(|s| s.id == "Heading1").unwrap();
+    st.id = "Ttulo1".into();
+    st.name = "heading 1".into();
+    let h = headers(&d);
+    let err = styleref::NO_TEXT;
+    assert_eq!(h[0], ["BEGINNINGS", err]);
+    assert_eq!(h[1], ["MIDDLES", err]);
+    assert_eq!(h[3], ["ENDINGS", err]);
+}
+
 /// Typing in body text that no STYLEREF shows keeps every header paragraph cached (#1286); an
 /// edited heading still updates the headers that show it.
 #[test]

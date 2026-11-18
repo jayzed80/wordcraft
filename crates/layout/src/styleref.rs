@@ -266,8 +266,19 @@ impl StyleIndex {
                 .unwrap_or_else(|| format!("Heading{n}"));
             return Some(Target::Para(id));
         }
-        let (id, chr) = self.styles.get(&style.to_lowercase())?;
+        let (id, chr) = self.styles.get(&style.to_lowercase()).or_else(|| self.localized_builtin(style))?;
         Some(if *chr { Target::Char(id.clone()) } else { Target::Para(id.clone()) })
+    }
+
+    /// A built-in style named in the language of the Word that wrote the field (#7020): Spanish
+    /// Word writes `STYLEREF "Título 1"` while the file names the style `heading 1`, under the id
+    /// Word made from the name it showed, its ASCII letters and digits (`Ttulo1`).
+    fn localized_builtin(&self, style: &str) -> Option<&(String, bool)> {
+        let id: String = style.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_lowercase();
+        if id.is_empty() || id == style.to_lowercase() {
+            return None;
+        }
+        self.styles.get(&id).filter(|(found, _)| found.to_lowercase() == id)
     }
 
     fn text_of(&self, i: usize, t: &Target) -> Option<String> {
