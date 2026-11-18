@@ -236,23 +236,51 @@ fn document_entry(doc: &Document, name: &str, gallery: &str) -> Option<usize> {
     g.iter().position(|e| e.name == name && e.gallery == gallery).or_else(|| g.iter().position(|e| e.name == name))
 }
 
+/// Header & Footer › Next / Previous Section (#6988): from the header (or footer) being edited
+/// to the next or previous header (footer) area as they come in the document: each section's
+/// first-page, even-page and other-page ones, in page order, including a section's that is the
+/// same as the previous section's. It stays a header (footer), and stops at the first and last.
 pub(super) fn hf_nav(s: &mut Session, dir: i32) -> CmdResult {
     let StoryRef::Part(cur) = s.sel.focus.story else { return Err(CmdError::Disabled("edit a header or footer first".into())) };
-    let mut ids: Vec<u32> = Vec::new();
-    for (_, sect) in s.doc.sections() {
-        for id in [sect.headers.default, sect.headers.first, sect.headers.even, sect.footers.default, sect.footers.first, sect.footers.even]
-            .into_iter()
-            .flatten()
-        {
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
+    let hint = s.page_hint;
+    let layout = s.layout();
+    let pages = &layout.pages;
+    let on = |pg: &wordcraft_layout::Page| pg.header_story == Some(cur) || pg.footer_story == Some(cur);
+    // The page it is being edited on: the caret's page if it shows it, else the first that does.
+    let here = pages.get(hint).filter(|pg| on(pg)).map(|_| hint).or_else(|| pages.iter().position(on));
+    let Some(here) = here else { return Err(CmdError::Disabled("edit a header or footer first".into())) };
+    let header = pages.get(here).is_some_and(|pg| pg.header_story == Some(cur));
+    let shown = |pg: &wordcraft_layout::Page| if header { pg.header_story } else { pg.footer_story };
+    // One stop per header area: the first page of each slot of each section. A section's pages
+    // are together, so only its own stops are compared.
+    let mut stops: Vec<usize> = Vec::new();
+    let mut section_slots: Vec<wordcraft_layout::HfSlot> = Vec::new();
+    let mut section = None;
+    let mut at = None;
+    for (i, pg) in pages.iter().enumerate() {
+        if section != Some(pg.section) {
+            section = Some(pg.section);
+            section_slots.clear();
+        }
+        if !section_slots.contains(&pg.hf_slot) {
+            section_slots.push(pg.hf_slot);
+            stops.push(i);
+        }
+        if i == here {
+            // The stop of the area this page belongs to.
+            let slot = section_slots.iter().position(|x| *x == pg.hf_slot).unwrap_or(0);
+            at = stops.len().checked_sub(section_slots.len()).map(|first| first + slot);
         }
     }
-    let i = ids.iter().position(|x| *x == cur).unwrap_or(0) as i32;
-    let n = ids.len().max(1) as i32;
-    let next = ids.get(((i + dir).rem_euclid(n)) as usize).copied().unwrap_or(cur);
-    s.sel = Selection::caret(s.doc.start_of(StoryRef::Part(next)));
+    let at = at.unwrap_or(0);
+    let has = |i: &&usize| pages.get(**i).and_then(shown).is_some_and(|id| s.doc.parts.contains_key(&id));
+    let to = if dir > 0 { stops.iter().skip(at + 1).find(has) } else { stops.iter().take(at).rev().find(has) };
+    let Some((page, id)) = to.and_then(|i| pages.get(*i).and_then(shown).map(|id| (*i, id))) else {
+        let which = if dir > 0 { "no next section" } else { "no previous section" };
+        return Err(CmdError::Disabled(which.into()));
+    };
+    s.page_hint = page;
+    s.sel = Selection::caret(s.doc.start_of(StoryRef::Part(id)));
     sel_result(s)
 }
 

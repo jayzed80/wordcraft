@@ -1052,3 +1052,95 @@ fn language_document_scope_is_refused_under_protection() {
         assert!(s.prefs.detect_language, "{mode}: the detect preference is untouched");
     }
 }
+
+/// A header or footer part holding `text`.
+fn hf_part(s: &mut Session, kind: wordcraft_doc::PartKind, text: &str) -> u32 {
+    s.doc.add_part(kind, vec![para_block(Paragraph::with_text(text, CharProps::default()))])
+}
+
+/// Three one-page sections: the first with its own header and footer, the second linked to it,
+/// the third with a header and footer of its own. Returns the parts (H1, F1, H3, F3).
+fn three_hf_sections() -> (Session, [u32; 4]) {
+    use wordcraft_doc::PartKind::{Footer, Header};
+    let mut s = Session::new(Document::new());
+    s.run("text.insert", &json!({"text": "One"})).unwrap();
+    s.run("layout.break", &json!({"kind": "nextPage"})).unwrap();
+    s.run("text.insert", &json!({"text": "Two"})).unwrap();
+    s.run("layout.break", &json!({"kind": "nextPage"})).unwrap();
+    s.run("text.insert", &json!({"text": "Three"})).unwrap();
+    let (h1, f1) = (hf_part(&mut s, Header, "H1"), hf_part(&mut s, Footer, "F1"));
+    let (h3, f3) = (hf_part(&mut s, Header, "H3"), hf_part(&mut s, Footer, "F3"));
+    s.doc.section_mut(0).headers.default = Some(h1);
+    s.doc.section_mut(0).footers.default = Some(f1);
+    s.doc.last_section.headers.default = Some(h3);
+    s.doc.last_section.footers.default = Some(f3);
+    s.touch();
+    let pages: Vec<_> = s.layout().pages.iter().map(|p| (p.section, p.header_story, p.footer_story)).collect();
+    assert_eq!(pages, vec![(0, Some(h1), Some(f1)), (1, Some(h1), Some(f1)), (2, Some(h3), Some(f3))]);
+    (s, [h1, f1, h3, f3])
+}
+
+/// The header or footer the caret is in, and the page it is being edited on.
+fn hf_at(s: &Session) -> (StoryRef, usize) {
+    (s.sel.focus.story, s.page_hint)
+}
+
+/// #6988: Header & Footer › Next and Previous go section by section, a header to the next
+/// section's header and a footer to its footer, through a section linked to the previous one,
+/// and stop at the first and last sections instead of wrapping round.
+#[test]
+fn header_footer_next_and_previous_go_section_by_section() {
+    let (mut s, [h1, f1, h3, f3]) = three_hf_sections();
+    let text = s.doc.plain_text(StoryRef::Body);
+    s.run("insert.editHeader", &json!({"page": 0})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h1), 0));
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h1), 1), "section 2's header, the same as the previous");
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h3), 2), "section 3's own header");
+    assert!(s.run("hf.next", &json!({})).is_err(), "no section after the last");
+    assert_eq!(hf_at(&s), (StoryRef::Part(h3), 2));
+    s.run("hf.previous", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h1), 1));
+    s.run("hf.previous", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h1), 0));
+    assert!(s.run("hf.previous", &json!({})).is_err(), "no section before the first");
+    // Footers go to footers.
+    s.run("insert.editFooter", &json!({"page": 0})).unwrap();
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(f1), 1));
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(f3), 2));
+    s.run("hf.previous", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(f1), 1));
+    // Nothing changed on the way.
+    assert_eq!(s.doc.plain_text(StoryRef::Part(h1)), "H1");
+    assert_eq!(s.doc.plain_text(StoryRef::Part(f3)), "F3");
+    assert_eq!(s.doc.plain_text(StoryRef::Body), text);
+    // In the body there is nothing to move between.
+    s.run("insert.closeHeader", &json!({})).unwrap();
+    assert!(s.run("hf.next", &json!({})).is_err());
+}
+
+/// #6988: with Different First Page, Next goes from the first page's header to the header of
+/// the section's other pages, as the header areas come in the document, then to the next section.
+#[test]
+fn header_footer_next_visits_a_first_page_header_then_the_rest_of_the_section() {
+    let (mut s, [h1, _, h3, _]) = three_hf_sections();
+    s.run("insert.pageBreak", &json!({})).unwrap();
+    s.run("text.insert", &json!({"text": "Four"})).unwrap();
+    let first = hf_part(&mut s, wordcraft_doc::PartKind::Header, "First");
+    s.doc.last_section.title_page = true;
+    s.doc.last_section.headers.first = Some(first);
+    s.touch();
+    let shown: Vec<_> = s.layout().pages.iter().map(|p| p.header_story).collect();
+    assert_eq!(shown, vec![Some(h1), Some(h1), Some(first), Some(h3)]);
+    s.run("insert.editHeader", &json!({"page": 1})).unwrap();
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(first), 2));
+    s.run("hf.next", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(h3), 3));
+    assert!(s.run("hf.next", &json!({})).is_err());
+    s.run("hf.previous", &json!({})).unwrap();
+    assert_eq!(hf_at(&s), (StoryRef::Part(first), 2));
+}
