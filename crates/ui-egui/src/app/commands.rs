@@ -122,8 +122,11 @@ impl WordApp {
             return Ok(false);
         }
         if self.services.host_save.is_some() {
+            // The bridge sends the file name only (`Bridge::post_save`), so compare that: a copy
+            // asked for as "./report.docx" reaches the host as "report.docx".
             let opened = self.session.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string());
-            if opened.as_deref() == Some(name) {
+            let requested = std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.to_string());
+            if opened.as_deref() == Some(requested.as_str()) {
                 return Err("a copy can't have the same name as the open document: choose another name".into());
             }
         }
